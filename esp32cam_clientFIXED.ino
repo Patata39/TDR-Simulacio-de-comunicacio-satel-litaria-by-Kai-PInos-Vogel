@@ -1,7 +1,7 @@
 #include <WiFi.h>
 #include "esp_camera.h"
 
-// ── NOU: SERVER_IP ara és un buffer modificable per UART ────────
+// ──  SERVER_IP ara és un buffer modificable per UART ────────
 // En comptes de  const char* SERVER_IP = "192.168.1.42";
 char serverIp[20] = "192.168.1.42";   // valor per defecte
 // ──────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ uint32_t lastConnectMs = 0;
 HardwareSerial camSerial(1);
 uint32_t lastUartSend = 0;
 
-// ── NOU: buffer de línia entrant per UART ──────────────────────
+// ── buffer de línia entrant per UART ──────────────────────
 String uartLine = "";
 // ──────────────────────────────────────────────────────────────
 
@@ -78,7 +78,7 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) { delay(250); Serial.print("."); }
   Serial.println("\nWiFi OK: " + WiFi.localIP().toString());
 
-  uartLine.reserve(64);   // ── NOU
+  uartLine.reserve(64);   
 }
 
 void loop() {
@@ -90,34 +90,31 @@ void loop() {
     float  temp = temperatureRead();
     camSerial.printf("CAM_STAT:%d,%s,%.1f,%s\n", rssi, ip.c_str(), temp, serverIp);
   }
-  // 1. LEER LA UART CARÁCTER A CARÁCTER (Evita que se sature el búfer)
   while (camSerial.available()) {
     char c = camSerial.read();
     static String inputLine = "";
 
-    if (c == '\n') { // Cuando detecta el salto de línea enviado por el Arduino
+    if (c == '\n') { 
       inputLine.trim();
       if (inputLine.startsWith("SET_IP:")) {
         String nuevaIp = inputLine.substring(7);
         nuevaIp.toCharArray(serverIp, sizeof(serverIp));
         Serial.printf("Nueva IP configurada por UART: %s\n", serverIp);
         
-        // Forzamos la desconexión del servidor actual para conectar a la nueva IP
         if (serverConnected) {
           camClient.stop();
           serverConnected = false;
         }
       }
-      inputLine = ""; // Limpiamos el buffer para la siguiente línea
+      inputLine = ""; 
     } else if (c != '\r') {
-      inputLine += c; // Guardamos el carácter recibido
+      inputLine += c;
     }
   }
 
-  // 2. CONEXIÓN AL SERVIDOR (De forma no bloqueante con millis)
   if (!serverConnected) {
     uint32_t now = millis();
-    if (now - lastConnectMs >= 3000) { // Intenta conectar cada 3 segundos
+    if (now - lastConnectMs >= 3000) { 
       lastConnectMs = now;
       Serial.printf("Intentando conectar a %s:%d...\n", serverIp, SERVER_PORT);
       
@@ -130,10 +127,9 @@ void loop() {
         Serial.printf("Error de conexión a %s. Reintentando...\n", serverIp);
       }
     }
-    return; // Si no está conectado, sale del loop para seguir escuchando la UART
+    return;
   }
 
-  // 3. ENVÍO DE IMÁGENES (Solo si ya está conectado de forma estable)
   if (!camClient.connected()) { 
     serverConnected = false; 
     camClient.stop(); 
@@ -147,7 +143,6 @@ void loop() {
     return; 
   }
 
-  // Cabecera del paquete de video
   uint8_t hdr[8] = {
     'M','C','A','M',
     (uint8_t)(fb->len >> 24), (uint8_t)(fb->len >> 16),
