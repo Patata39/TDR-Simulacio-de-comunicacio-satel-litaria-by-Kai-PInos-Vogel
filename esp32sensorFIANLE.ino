@@ -6,57 +6,55 @@
 #include "HUSKYLENS.h"
 #include <Keypad.h>
 #include <LiquidCrystal_I2C.h>
-#include <SoftwareSerial.h>   // NOU: librería "EspSoftwareSerial" (instálala desde el Library Manager,
-                              // buscando "EspSoftwareSerial" de Peter Lerup — NO la SoftwareSerial de AVR)
+#include <SoftwareSerial.h>   
 
 // =====================================================================
-// INSTRUCCIONES DEL TECLADO 4x4 + PANTALLA LCD
+// INSTRUCCIONS DEL TECLAT 4x4 + PANTALLA LCD
 // =====================================================================
 //
-//  Esta interfaz (teclado 4x4 + LCD) es INDEPENDIENTE del WiFi: funciona
-//  desde el primer segundo, tanto si hay WiFi como si no, ya que las
-//  tareas se crean antes de intentar conectar. Lo único que necesita
-//  para poder enviar la IP a la ESP32-CAM es que la UART hacia la CAM
-//  (SerialCAM) se haya inicializado correctamente en el setup().
+// Aquesta interfície (teclat 4x4 + LCD) és INDEPENDENT del WiFi: funciona
+// des del primer segon, tant si hi ha WiFi com si no, ja que les
+// tasques es creen abans d'intentar connectar. L'únic que necessita
+// per poder enviar la IP a l'ESP32-CAM és que la UART cap a la CAM
+// (SerialCAM) s'ha inicialitzat correctament al setup().
 //
-//  MODO MENÚ (UI_MENU):
-//    A   -> Subir una opción en el menú
-//    B   -> Bajar una opción en el menú
-//    #   -> Confirmar / activar la opción resaltada (con ">")
-//    1,2,3... -> Acceso directo opcional a la opción N
+// MODE MENÚ (UI_MENU):
+// A -> Pujar una opció al menú
+// B -> Baixar una opció al menú
+// # -> Confirmar / activar l'opció ressaltada (amb ">")
+// 1,2,3... -> Accés directe opcional a l'opció N
 //
-//  MODO INTRODUCIR IP (UI_INPUT_IP):
-//    0-9 -> Escribir los dígitos de la IP
-//    D   -> Insertar un punto "." (ej: 192 D 168 D 1 D 42)
-//    *   -> Borrar el último carácter escrito.
-//           Si el campo ya está vacío, vuelve al menú principal.
-//    #   -> Confirmar y aplicar la IP introducida (si es válida)
+// MODE INTRODUIR IP (UI_INPUT_IP):
+// 0-9 -> Escriure els dígits de la IP
+// D -> Inserir un punt "." (ex: 192 D 168 D 1 D 42)
+// * -> Esborrar el darrer caràcter escrit.
+// Si el camp ja és buit, torna al menú principal.
+// # -> Confirmar i aplicar la IP introduïda (si és vàlida)
+//// MODE VEURE ESTAT (UI_INFO):
+// * -> Tornar al menú principal
 //
-//  MODO VER ESTADO (UI_INFO):
-//    *   -> Volver al menú principal
+// La tecla 'C' queda lliure, sense fer servir, per a futures ampliacions.
 //
-//  La tecla 'C' queda libre, sin usar, para futuras ampliaciones.
-//
-//  Todas estas teclas se pueden cambiar fácilmente más abajo, en la
-//  sección "CONFIGURACIÓN DE TECLAS DE NAVEGACIÓN (editable)"
-//  (variables KEY_MENU_UP, KEY_MENU_DOWN, KEY_CONFIRM, KEY_BACKSPACE,
-//  KEY_IP_DOT) sin tener que tocar el resto del código.
+// Totes aquestes tecles es poden canviar fàcilment més avall, a la
+// secció "CONFIGURACIÓ DE TECLES DE NAVEGACIÓ (editable)"
+// (variables KEY_MENU_UP, KEY_MENU_DOWN, KEY_CONFIRM, KEY_BACKSPACE,
+// KEY_IP_DOT) sense haver de tocar la resta del codi.
 //
 // =====================================================================
-// CONEXIÓN CON EL ARDUINO DEL COCHE (cable directo, ex-HC-06)
+// CONNEXIÓ AMB L'ARDUÍ DEL COTXE (cable directe, ex-HC-06)
 // =====================================================================
 //
-//  Esta ESP32 sensor reenvía al Arduino, por una UART software propia
-//  (pines ARDUINO_RX_PIN/ARDUINO_TX_PIN, ver más abajo), cualquier
-//  comando de coche/servo que llegue por TCP desde test.py:
-//    F/B/L/R/S → movimiento del coche      Q/E → servo del ultrasonido
+// Aquesta ESP32 sensor reenvia a l'Arduino, per una UART programari pròpia
+// (pins ARDUINO_RX_PIN/ARDUINO_TX_PIN, veure més avall), qualsevol
+// comanda de cotxe/servo que arribi per TCP des de test.py:
+// F/B/L/R/S → moviment del cotxe Q/E → servo de l'ultrasò
 //
-//  Mientras el coche está en marcha (F/B/L/R activos) y la conexión
-//  TCP con el PC sigue viva, esta ESP32 reenvía el último comando al
-//  Arduino cada CAR_RESEND_INTERVAL_MS, para alimentar el watchdog de
-//  seguridad del propio Arduino (que se para solo si deja de recibir
-//  comandos). Si el TCP se cae, esta ESP32 deja de reenviar y el
-//  Arduino se parará solo en cuanto venza su watchdog.
+// Mentre el cotxe està en marxa (F/B/L/R actius) i la connexió
+// TCP amb el PC segueix viva, aquesta ESP32 reenvia el darrer comandament al
+// Arduino cada CAR_RESEND_INTERVAL_MS, per alimentar el watchdog de
+// seguretat del propi Arduino (que es para només si deixa de rebre
+// ordres). Si el TCP cau, aquesta ESP32 deixa de reenviar i el
+// Arduino es pararà només així que venci el seu watchdog.
 // =====================================================================
 
 // =====================================================
@@ -69,16 +67,9 @@ const uint16_t SERVER_PORT        = 5000;
 const uint32_t PUSH_INTERVAL_MS   = 500;
 const uint32_t RECONN_INTERVAL_MS = 3000;
 
-// Intentos iniciales (de 500ms) para conectar al WiFi en el setup().
-// Si se agotan sin éxito, el ESP32 YA NO se reinicia: continúa
-// funcionando (teclado, LCD, sensores, UART hacia la CAM) y el loop()
-// principal seguirá reintentando la conexión en segundo plano.
+
 const uint8_t  WIFI_CONNECT_TRIES = 10;
 
-// ── NOU: IP que s'enviarà a la ESP32-CAM per UART ──────────────
-// De moment és la mateixa que SERVER_IP.
-// En el futur, aquest buffer es pot omplir des d'un teclat 4x4 + LCD
-// seguint l'esquema al final del fitxer.
 char cam_target_ip[20];          // s'inicialitza al setup() des de SERVER_IP
 // ──────────────────────────────────────────────────────────────
 
@@ -117,7 +108,7 @@ volatile float cam_temp = 0.0f;
 char           cam_ip[20] = "0.0.0.0";
 SemaphoreHandle_t camMutex;
 
-// ── NOU: interval d'enviament de la IP cap a la CAM ────────────
+// ── interval d'enviament de la IP cap a la CAM ────────────
 #define CAM_IP_SEND_INTERVAL_MS 5000
 // ──────────────────────────────────────────────────────────────
 
@@ -147,9 +138,7 @@ unsigned long lastCarSendMs    = 0;
 // TECLAT 4x4 + LCD I2C — Configuració
 // =====================================================
 #define LCD_I2C_ADDR 0x27   // canvia a 0x3F si el teu mòdul fa servir aquesta adreça
-// OJO: aquí había 18 columnas x 19 filas, que no existen en ningún LCD
-// real y rompían el direccionamiento interno de la librería. Lo normal
-// es 16x2 (el más común) o 20x4. Ajusta estos dos valores a tu pantalla.
+
 #define LCD_COLS     16
 #define LCD_ROWS     2
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR, LCD_COLS, LCD_ROWS);
@@ -169,14 +158,13 @@ byte keypadRowPins[KEYPAD_ROWS] = {26, 25, 33, 32}; // Filas (Pines 1 al 4 del t
 byte keypadColPins[KEYPAD_COLS] = {13, 14, 15, 23};
 Keypad keypad = Keypad(makeKeymap(keypadKeys), keypadRowPins, keypadColPins, KEYPAD_ROWS, KEYPAD_COLS);
 
-// ── CONFIGURACIÓN DE TECLAS DE NAVEGACIÓN (editable) ────────────
-// Cambia aquí qué tecla física hace cada función, sin tocar el resto
-// del código. Deben coincidir con caracteres presentes en keypadKeys[].
-char KEY_MENU_UP   = 'A';  // sube una opción en el menú
-char KEY_MENU_DOWN = 'B';  // baja una opción en el menú
-char KEY_CONFIRM   = '#';  // confirma selección de menú / confirma IP
-char KEY_BACKSPACE = '*';  // borra último carácter / vuelve atrás
-char KEY_IP_DOT    = 'D';  // inserta el punto "." al escribir la IP
+// ── CONFIGURACIÓ DE TECLAS DE NAVEGACIÓ  ────────────
+
+char KEY_MENU_UP   = 'A';  
+char KEY_MENU_DOWN = 'B'; 
+char KEY_CONFIRM   = '#';
+char KEY_BACKSPACE = '*';  
+char KEY_IP_DOT    = 'D';  
 // ──────────────────────────────────────────────────────────────
 
 enum UIState { UI_MENU, UI_INPUT_IP, UI_INFO, UI_CAM_INFO };
@@ -197,7 +185,7 @@ SemaphoreHandle_t ipMutex;       // protegeix SERVER_IP i cam_target_ip
 volatile bool sendIPNow = false; // força enviament immediat de la IP a la CAM
 
 // =====================================================
-// PROTOTIPOS
+// PROTOTIPS
 // =====================================================
 void iniciarWiFi();
 bool connectarServidor();
@@ -271,7 +259,7 @@ unsigned long lastReconnMs    = 0;
 unsigned long lastHuskyMs     = 0;
 
 // =====================================================
-// MPU9250 — (sense canvis)
+// MPU9250 
 // =====================================================
 bool mpuInit() {
   I2CMPU.beginTransmission(MPU_ADDR);
@@ -324,7 +312,7 @@ void mpuRead(float &ax, float &ay, float &az,
 }
 
 // =====================================================
-// WIFI / TCP — (sense canvis)
+// WIFI / TCP 
 // =====================================================
 void iniciarWiFi() {
   WiFi.mode(WIFI_STA);
@@ -356,7 +344,7 @@ bool connectarServidor() {
 }
 
 // =====================================================
-// TASK IMU — (sense canvis)
+// TASK IMU
 // =====================================================
 void taskIMU(void* pvParameters) {
   filter.begin(100);
@@ -385,7 +373,7 @@ void taskIMU(void* pvParameters) {
 }
 
 // =====================================================
-// TASK HUSKYLENS — (sense canvis)
+// TASK HUSKYLENS 
 // =====================================================
 void taskHuskyLens(void* pvParameters) {
   for (;;) {
@@ -415,19 +403,6 @@ void taskHuskyLens(void* pvParameters) {
   }
 }
 
-// =====================================================
-// TASK CAM SERIAL
-// Rep:  "CAM_STAT:<rssi>,<ip>,<temp>"  (sense canvis)
-// ── NOU: Envia "SET_IP:<ip>\n" cap a la CAM cada 5 s
-//
-// Futura extensió (LCD + teclat 4x4):
-//   taskUI() modifica cam_target_ip[] via un formulari
-//   i crida  xSemaphoreGive(ipChangedSem)  per forçar
-//   un enviament immediat sense esperar els 5 s.
-//   Esquema de pins suggerit:
-//     LCD I2C  → SDA=GPIO21, SCL=GPIO22  (bus lliure)
-//     Teclat   → 8 GPIOs (ex: 13,12,14,27,26,25,33,32)
-// =====================================================
 void taskCamSerial(void* pvParameters) {
   String line = "";
   line.reserve(64);
@@ -436,7 +411,7 @@ void taskCamSerial(void* pvParameters) {
 
   for (;;) {
     uint32_t nowDbg = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
-    if (nowDbg - lastHeartbeat >= 1000) {          // ── DEBUG: cada 1s, sin condiciones
+    if (nowDbg - lastHeartbeat >= 1000) {          // ── DEBUG: cada 1s
       lastHeartbeat = nowDbg;
       Serial.printf("[CAM_TASK] viva | bytes pendientes: %d\n", SerialCAM.available());
     }
@@ -491,7 +466,7 @@ void taskCamSerial(void* pvParameters) {
 }
 
 // =====================================================
-// ENVIAR DADES / HUSKY / RECALIBRAR — (sense canvis)
+// ENVIAR DADES / HUSKY / RECALIBRAR
 // =====================================================
 void enviarDades() {
   float roll, pitch, yaw, mx, my, mz;
@@ -594,10 +569,6 @@ void lcdShowMenu() {
   lcd.print(">");
   lcd.print(MENU_ITEMS[menuIndex]);
 
-  // Antes esto hacía (menuIndex + 1) % MENU_COUNT, así que al llegar a
-  // la última opción la línea de abajo volvía a mostrar la opción 1
-  // (le daba la vuelta a la lista). Ahora solo mostramos una "siguiente
-  // opción" si realmente existe una opción después de la actual.
   if (menuIndex + 1 < MENU_COUNT) {
     lcd.setCursor(0, 1);
     lcd.print(" ");
@@ -640,10 +611,10 @@ void lcdShowCamInfo() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("L:");
-  lcd.print(ip);       // arriba: IP física de la CAM
+  lcd.print(ip);     
   lcd.setCursor(0, 1);
   lcd.print("S:");
-  lcd.print(srv);      // abajo: IP que busca la CAM
+  lcd.print(srv);    
 }
 
 // =====================================================
@@ -682,15 +653,6 @@ void taskUI(void* pvParameters) {
   for (;;) {
     char key = keypad.getKey();
     if (key) {
-      // ── DEBUG TEMPORAL ────────────────────────────────────────
-      // Imprime por el Monitor Serie (115200 baudios) CADA tecla que
-      // el código detecta, junto con el estado actual de la pantalla.
-      // Pulsa cada botón físico uno a uno y compara: si lo que sale
-      // aquí no coincide con el botón que has apretado (p.ej. pulsas
-      // el "2" físico y aquí sale 'A' o '5'), el problema es de
-      // CABLEADO (las filas/columnas no están en los pines que el
-      // código espera, keypadRowPins/keypadColPins), no de lógica.
-      // Cuando ya esté todo verificado, puedes borrar esta línea.
       Serial.printf("[TECLAT] tecla='%c' (ASCII %d) | uiState=%d | menuIndex=%d | buffer=\"%s\"\n",
                     key, (int)key, (int)uiState, menuIndex, ipInputBuffer.c_str());
       // ─────────────────────────────────────────────────────────
@@ -698,10 +660,10 @@ void taskUI(void* pvParameters) {
       switch (uiState) {
 
         case UI_MENU:
-          if (key == KEY_MENU_UP) {                 // sube
+          if (key == KEY_MENU_UP) {                 
             menuIndex = (menuIndex - 1 + MENU_COUNT) % MENU_COUNT;
             lcdShowMenu();
-          } else if (key == KEY_MENU_DOWN) {        // baja
+          } else if (key == KEY_MENU_DOWN) {        
             menuIndex = (menuIndex + 1) % MENU_COUNT;
             lcdShowMenu();
           } else if (key >= '1' && key <= ('0' + MENU_COUNT)) { // accés directe 1/2/3
@@ -777,9 +739,7 @@ void taskUI(void* pvParameters) {
 void processarComanda(const String& cmd) {
   Serial.println("CMD: " + cmd);
 
-  // ── Comandos del coche/servo (Arduino) ────────────────────────
-  // Llegan tal cual desde test.py (un solo carácter), se reenvían
-  // directamente a la UART software hacia el Arduino.
+
   if (cmd.length() == 1 && strchr("FBLRSQE", cmd.charAt(0))) {
   char c = cmd.charAt(0);
   if (c == 'S') {
@@ -834,14 +794,11 @@ void setup() {
   delay(2000);
   Serial.println("\n=== ESP32 GY-91 + HuskyLens — Control Remot ===");
 
-  // 1. Inicializamos el Wire nativo en los pines 21 y 22 (Aquí conectarás LCD y BME280 en paralelo)
   Wire.begin(21, 22, 100000); 
 
-  // 2. Inicializamos el segundo bus de hardware para la IMU en los pines 16 y 17
   I2CMPU.begin(16, 17, 400000); 
   delay(300);
 
-  // La LCD funcionará automáticamente en los pines 21 y 22 bajo el objeto Wire nativo
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0, 0);
@@ -851,7 +808,6 @@ void setup() {
   cam_target_ip[sizeof(cam_target_ip) - 1] = '\0';
 
   Serial.println("Iniciant BME280...");
-  // 3. CAMBIO CLAVE: Cambiamos &I2CBME por &Wire
   bme_ok = bme.begin(0x76, &Wire); 
   Serial.println(bme_ok ? "  BME280 OK" : "  ERROR BME280");
 
@@ -888,12 +844,12 @@ void setup() {
   imuMutex   = xSemaphoreCreateMutex();
   huskyMutex = xSemaphoreCreateMutex();
   camMutex   = xSemaphoreCreateMutex();
-  ipMutex    = xSemaphoreCreateMutex();   // NOU
+  ipMutex    = xSemaphoreCreateMutex();  
 
   xTaskCreatePinnedToCore(taskIMU,       "imu",   4096, NULL, 2, NULL, 1);
   xTaskCreatePinnedToCore(taskHuskyLens, "husky", 4096, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(taskCamSerial, "cam",   2048, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(taskUI,        "ui",    4096, NULL, 2, NULL, 0); // NOU
+  xTaskCreatePinnedToCore(taskUI,        "ui",    4096, NULL, 2, NULL, 0); 
 
   iniciarWiFi(); // si falla, ja NO reinicia: la resta del sistema continua actiu
 
