@@ -10,4 +10,4 @@ Al fer ús d'aquest repositori et compromets amb les següentes condicions:
 
 Si vols **sol·licitar un permís especial** per utilitzar aquest codi, pots posar-te en contacte amb mi a través de <<pinosvogelk@gmail.com>>.
 
-
+A l'apartat de tags o releases es troba l'arxiu comprimit amb l'executable final i diverses missions llestes per analitzar.
