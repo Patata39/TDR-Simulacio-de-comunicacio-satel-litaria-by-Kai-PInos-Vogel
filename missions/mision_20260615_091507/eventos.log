@@ -1,0 +1,11 @@
+2026-06-12 17:17:45 [INFO] ============================================================
+2026-06-12 17:17:45 [INFO] INICIO DE REPORTE DE RENDIMIENTO DEL SISTEMA
+2026-06-12 17:17:45 [INFO] ============================================================
+2026-06-12 17:17:45 [INFO] Tiempo total de actividad: 491.40 segundos
+2026-06-12 17:17:45 [INFO] Rendimiento Stream Video: 3.35 FPS de media
+2026-06-12 17:17:45 [INFO] Total de cuadros procesados: 1644
+2026-06-12 17:17:45 [INFO] Rendimiento Renderizado 3D (Matplotlib): 1.27 FPS de refresco medio
+2026-06-12 17:17:45 [INFO] Visión Artificial (HuskyLens): 136 objetos en el historial
+2026-06-12 17:17:45 [INFO] Xarxa TCP: S' han enregistrat 0 anomalies
+2026-06-12 17:17:45 [INFO] ============================================================
+2026-06-12 17:17:45 [INFO] FI DEL REPORTATGE

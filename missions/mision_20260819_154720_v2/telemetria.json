@@ -1,0 +1,11 @@
+[
+{"ts": "2026-08-19T15:47:21.059", "ts_ms": 284, "temperatura": 29.91, "humedad": 46.34, "presion": 994.64, "roll": 0.22, "pitch": 1.41, "yaw": 58.32, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -36},
+{"ts": "2026-08-19T15:47:21.574", "ts_ms": 799, "temperatura": 29.91, "humedad": 46.34, "presion": 994.64, "roll": 0.14, "pitch": 1.4, "yaw": 58.34, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -37},
+{"ts": "2026-08-19T15:47:22.087", "ts_ms": 1311, "temperatura": 29.91, "humedad": 46.34, "presion": 994.64, "roll": 0.2, "pitch": 1.42, "yaw": 58.37, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -41},
+{"ts": "2026-08-19T15:47:22.597", "ts_ms": 1821, "temperatura": 29.9, "humedad": 46.83, "presion": 994.64, "roll": 0.15, "pitch": 1.47, "yaw": 58.36, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -42},
+{"ts": "2026-08-19T15:47:23.056", "ts_ms": 2280, "temperatura": 29.9, "humedad": 46.83, "presion": 994.64, "roll": 0.23, "pitch": 1.42, "yaw": 58.38, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -37},
+{"ts": "2026-08-19T15:47:23.558", "ts_ms": 2782, "temperatura": 29.9, "humedad": 46.83, "presion": 994.64, "roll": 0.19, "pitch": 1.44, "yaw": 58.4, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -48},
+{"ts": "2026-08-19T15:47:24.058", "ts_ms": 3282, "temperatura": 29.9, "humedad": 46.83, "presion": 994.64, "roll": 0.14, "pitch": 1.37, "yaw": 58.42, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -41},
+{"ts": "2026-08-19T15:47:24.559", "ts_ms": 3784, "temperatura": 29.89, "humedad": 46.94, "presion": 994.61, "roll": 0.15, "pitch": 1.48, "yaw": 58.42, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -36},
+{"ts": "2026-08-19T15:47:25.062", "ts_ms": 4287, "temperatura": 29.89, "humedad": 46.94, "presion": 994.61, "roll": 0.17, "pitch": 1.46, "yaw": 58.43, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -37}
+]

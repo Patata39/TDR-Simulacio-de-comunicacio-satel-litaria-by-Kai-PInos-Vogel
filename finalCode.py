@@ -10,8 +10,6 @@ from tkinter import filedialog
 import csv
 import json as _json_mod
 import logging
-import os
-import pathlib
 import socket
 import sys
 import re
@@ -21,8 +19,8 @@ from datetime import datetime
 from json import loads, dumps
 from pathlib import Path
 from typing import Optional
-import socketserver
 import http.server
+from urllib.parse import urlparse, unquote
 
 import cv2
 import matplotlib as mpl
@@ -2032,55 +2030,272 @@ def refresh_id_tree():
 # INTEGRACIÓ WEB
 # ═════════════════════════════════════════════════════════════════
 
-def generar_web_informe():
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <title>Informe de Misión - ESP32 Control</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; background: #1a1a2e; color: white; padding: 20px; }}
-            .card {{ background: #16213e; padding: 15px; border-radius: 8px; margin-bottom: 15px; }}
-            h1 {{ color: #00d4ff; }}
-        </style>
-    </head>
-    <body>
-        <h1>📊 Informe de Última Misión</h1>
-        <div class="card">
-            <h2>Resumen General</h2>
-            <p><strong>Última actualización:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-            <p><strong>Estado del sistema:</strong> Completado con éxito</p>
-        </div>
-        <!-- Aquí añadirías tarjetas con fotos, enlaces a CSV, etc. -->
-    </body>
-    </html>
-    """
-    
-    # 3. Escribimos el archivo HTML
-    with open("web/index.html", "w", encoding="utf-8") as f:
-        f.write(html_content)
+# ═════════════════════════════════════════════════════════════════
+# INTEGRACIÓ WEB
+# ═════════════════════════════════════════════════════════════════
+# ── NOU: l'API JSON + pàgina estàtica. Dades que NO són a l'app:
+#   estadístiques min/màx/mitjana, qualitat RSSI, talls de dades,
+#   resum HuskyLens per objecte, cronologia de deteccions, nivells
+#   del log, estat en viu del sistema i descàrrega de fitxers.
+
+_RE_NOM_MISSIO = re.compile(r"^mision_\d{8}_\d{6}(?:_v\d+)?$")
+_FITXERS_DESCARREGABLES = {"telemetria.json", "huskylens.csv", "eventos.log"}
+_FITXERS_ESTATICS = {"/": "index.html", "/index.html": "index.html",
+                     "/style.css": "style.css", "/app.js": "app.js"}
+
+def _web_llegir_telemetria(ruta: Path) -> list:
+    """Llegeix telemetria.json tolerant fitxers sense tancar (missió activa)."""
+    try:
+        txt = ruta.read_text(encoding="utf-8").strip()
+    except Exception:
+        return []
+    if not txt:
+        return []
+    if not txt.endswith("]"):
+        txt = txt.rstrip(",\n ") + "\n]"
+    try:
+        return _json_mod.loads(txt)
+    except Exception:
+        return []
+
+def _web_stats(vals: list):
+    v = [float(x) for x in vals if x is not None]
+    if not v:
+        return None
+    return {"min": round(min(v), 2), "max": round(max(v), 2),
+            "avg": round(sum(v) / len(v), 2)}
+
+def _web_resum_mision(nom: str):
+    if not _RE_NOM_MISSIO.match(nom):
+        return None
+    ruta = CARPETA_MISSIONS / nom
+    if not ruta.is_dir():
+        return None
+
+    telem = _web_llegir_telemetria(ruta / "telemetria.json")
+
+    husky_rows = []
+    f_h = ruta / "huskylens.csv"
+    if f_h.exists():
+        try:
+            with open(f_h, "r", encoding="utf-8") as f:
+                husky_rows = list(csv.DictReader(f))
+        except Exception:
+            pass
+
+    eventos = []
+    f_e = ruta / "eventos.log"
+    if f_e.exists():
+        try:
+            eventos = f_e.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            pass
+
+    activa = bool(misiones.mision_activa and misiones.mision_activa.name == nom)
+
+    # ── Durada
+    dur_ms = telem[-1].get("ts_ms", 0) if telem else 0
+    if activa:
+        dur_ms = max(dur_ms, misiones._ms_desde_inicio())
+    for r in husky_rows:
+        try: dur_ms = max(dur_ms, int(r.get("time_ms") or 0))
+        except Exception: pass
+
+    # ── Estadístiques per variable
+    camps = {"temperatura": "temp", "humedad": "hum", "presion": "pres",
+             "rssi": "rssi", "roll": "roll", "pitch": "pitch", "yaw": "yaw"}
+    stats = {k: _web_stats([r.get(c) for r in telem]) for c, k in camps.items()}
+
+    # ── Qualitat RSSI (mateixos llindars que la finestra de salut)
+    rssi_v = [r["rssi"] for r in telem if r.get("rssi") is not None]
+    qualitat = None
+    if rssi_v:
+        n = len(rssi_v)
+        qualitat = {
+            "excelent":   round(100 * sum(1 for v in rssi_v if v >= -60) / n, 1),
+            "acceptable": round(100 * sum(1 for v in rssi_v if -75 <= v < -60) / n, 1),
+            "deficient":  round(100 * sum(1 for v in rssi_v if v < -75) / n, 1),
+        }
+
+    # ── Talls de dades (buits > 2 s entre mostres)
+    talls, max_tall = 0, 0
+    for a, b in zip(telem, telem[1:]):
+        d = b.get("ts_ms", 0) - a.get("ts_ms", 0)
+        if d > 2000:
+            talls += 1
+            max_tall = max(max_tall, d)
+    freq = round(len(telem) / (dur_ms / 1000.0), 2) if dur_ms > 0 and telem else 0
+
+    # ── HuskyLens: resum per ID + cronologia
+    per_id, sense_det, algos = {}, 0, set()
+    NB = 20
+    cronologia = [0] * NB
+    for r in husky_rows:
+        if r.get("algo"): algos.add(r["algo"])
+        if r.get("id", "") == "":
+            sense_det += 1
+            continue
+        try:
+            i = int(r["id"]); t = int(r.get("time_ms") or 0); a = int(r.get("area") or 0)
+        except Exception:
+            continue
+        d = per_id.setdefault(i, {
+            "id": i, "nom": HUSKY_ID_LABELS.get(i, f"ID:{i}"),
+            "n": 0, "suma_area": 0, "max_area": 0,
+            "primer_ms": t, "ultim_ms": t, "apres": 0})
+        d["n"] += 1; d["suma_area"] += a
+        d["max_area"] = max(d["max_area"], a)
+        d["primer_ms"] = min(d["primer_ms"], t)
+        d["ultim_ms"]  = max(d["ultim_ms"], t)
+        if str(r.get("learned", "0")) == "1": d["apres"] += 1
+        if dur_ms > 0:
+            cronologia[min(NB - 1, int(t / dur_ms * NB))] += 1
+    husky_llista = []
+    for d in sorted(per_id.values(), key=lambda x: -x["n"]):
+        d["area_mitja"] = round(d.pop("suma_area") / d["n"]) if d["n"] else 0
+        husky_llista.append(d)
+
+    # ── Log: comptadors per nivell
+    nivells = {"INFO": 0, "WARNING": 0, "ERROR": 0}
+    for ln in eventos:
+        for n in nivells:
+            if f"[{n}]" in ln:
+                nivells[n] += 1
+                break
+
+    # ── Sèries reduïdes (màx. 300 punts) per als gràfics
+    pas = max(1, len(telem) // 300)
+    series = {"t": [], "temp": [], "hum": [], "pres": [], "rssi": [],
+              "roll": [], "pitch": [], "yaw": []}
+    for r in telem[::pas]:
+        series["t"].append(r.get("ts_ms", 0))
+        for c, k in camps.items():
+            series[k].append(r.get(c))
+
+    fitxers = {}
+    for f in _FITXERS_DESCARREGABLES:
+        p = ruta / f
+        fitxers[f] = p.stat().st_size if p.exists() else 0
+
+    return {
+        "nom": nom, "activa": activa, "duracio_ms": dur_ms,
+        "n_telemetria": len(telem), "freq_hz": freq,
+        "talls": talls, "max_tall_ms": max_tall,
+        "stats": stats, "qualitat_rssi": qualitat, "series": series,
+        "husky": {"total": sum(d["n"] for d in husky_llista),
+                  "sense_deteccio": sense_det, "algos": sorted(algos),
+                  "per_id": husky_llista, "cronologia": cronologia},
+        "nivells": nivells, "eventos": eventos, "fitxers": fitxers,
+    }
+
+def _web_llista_missions() -> list:
+    res = []
+    for m in misiones.listar_misiones():
+        res.append({
+            "nom": m["nombre"], "etiqueta": m["etiqueta"],
+            "duracio": m["duracion"], "n_reg": m["n_reg"],
+            "activa": bool(misiones.mision_activa and misiones.mision_activa.name == m["nombre"]),
+        })
+    return res
+
+def _web_estat_viu() -> dict:
+    with sensor_lock:
+        sc = sensor_data["connected"]
+    with cam_lock:
+        cc = cam_state["connected"]
+    with husky_lock:
+        hc = husky_data["connected"]
+        n_obj = len(husky_data["objects"])
+        algo = husky_data["algo"]
+    with health_lock:
+        h = dict(health_data)
+        h.pop("history_cam_rssi", None)
+    temps = time.time() - temps_inici_app
+    return {
+        "sensor": sc, "cam": cc, "husky": hc,
+        "husky_objectes": n_obj, "husky_algo": algo,
+        "mision_activa": misiones.mision_activa.name if misiones.mision_activa else None,
+        "mision_ms": misiones._ms_desde_inicio() if misiones.mision_activa else 0,
+        "anomalies_tcp": anomalies_tcp,
+        "uptime_s": int(temps),
+        "fps_cam": round(contador_frames_cam / temps, 2) if temps > 0 else 0,
+        "salut": h,
+    }
+
+class _WebHandler(http.server.SimpleHTTPRequestHandler):
+
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map,
+                   ".js":   "application/javascript",
+                   ".css":  "text/css",
+                   ".html": "text/html"}
+       
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(CARPETA_WEB), **kwargs)
         
-    print("[WEB] Sitio web local actualizado correctamente.")
+
+    def log_message(self, *args):   # silenci a la consola de Tkinter
+        pass
+
+    def _json(self, obj, codi=200):
+        cos = _json_mod.dumps(obj, ensure_ascii=False, default=str).encode("utf-8")
+        self.send_response(codi)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(cos)))
+        self.end_headers()
+        self.wfile.write(cos)
+
+    def _descarregar(self, nom: str, fitxer: str):
+        if not _RE_NOM_MISSIO.match(nom) or fitxer not in _FITXERS_DESCARREGABLES:
+            return self.send_error(404)
+        p = CARPETA_MISSIONS / nom / fitxer
+        if not p.is_file():
+            return self.send_error(404)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Disposition", f'attachment; filename="{nom}_{fitxer}"')
+        self.send_header("Content-Length", str(p.stat().st_size))
+        self.end_headers()
+        with open(p, "rb") as f:
+            self.copyfile(f, self.wfile)
+
+    def do_GET(self):
+        ruta = urlparse(self.path).path
+        try:
+            if ruta == "/api/live":
+                return self._json(_web_estat_viu())
+            if ruta == "/api/missions":
+                return self._json(_web_llista_missions())
+            m = re.match(r"^/api/mission/([^/]+)$", ruta)
+            if m:
+                res = _web_resum_mision(unquote(m.group(1)))
+                return self._json(res if res else {"error": "no trobada"}, 200 if res else 404)
+            m = re.match(r"^/download/([^/]+)/([^/]+)$", ruta)
+            if m:
+                return self._descarregar(unquote(m.group(1)), unquote(m.group(2)))
+        except Exception as e:
+            return self._json({"error": str(e)}, 500)
+        fitxer = _FITXERS_ESTATICS.get(ruta)
+        if fitxer:
+            self.path = "/" + fitxer   
+            return super().do_GET()
+        self.send_error(404)
+
+def generar_web_informe():
+    """Comprova que els fitxers del panell (index.html, style.css, app.js) existeixen a /web."""
+    CARPETA_WEB.mkdir(parents=True, exist_ok=True)
+    for nom in ("index.html", "style.css", "app.js"):
+        if not (CARPETA_WEB / nom).is_file():
+            print(f"[WEB] AVÍS: falta web/{nom} — el panell no es veurà correctament.")
+    print("[WEB] Fitxers del panell verificats.")
 
 def arrancar_servidor_web():
     PORT = 8080
-    
-    CARPETA_WEB.mkdir(parents=True, exist_ok=True)
-    
-    index_file = CARPETA_WEB / "index.html"
-    if not index_file.exists():
-        index_file.write_text(
-            "<html><body><h1>Servidor Web Iniciat</h1><p>Pendents de generar informe...</p></body></html>",
-            encoding="utf-8"
-        )
-
-    class CustomHandler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(CARPETA_WEB), **kwargs)
-
     try:
-        with socketserver.TCPServer(("", PORT), CustomHandler) as httpd:
+        generar_web_informe()
+        # ThreadingHTTPServer: una petició lenta no bloqueja les altres
+        http.server.ThreadingHTTPServer.allow_reuse_address = True
+        with http.server.ThreadingHTTPServer(("", PORT), _WebHandler) as httpd:
             print(f"[WEB] Servidor web actiu a http://localhost:{PORT}")
             httpd.serve_forever()
     except Exception as e:

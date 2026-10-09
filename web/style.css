@@ -1,0 +1,35 @@
+:root{--bg:#0d0d1a;--panel:#16213e;--line:#2a3a66;--txt:#e0e0e0;--mut:#8890a8;--acc:#00d4ff;--ok:#00aa44;--warn:#ff9f1c;--err:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:13px Consolas,monospace}
+header{display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;color:var(--acc)}
+.pill{padding:2px 8px;border:1px solid var(--line);border-radius:10px;color:var(--mut)}
+.pill.on{color:var(--ok);border-color:var(--ok)}
+.pill.bad{color:var(--err);border-color:var(--err)}
+main{display:flex;min-height:calc(100vh - 50px)}
+aside{width:260px;border-right:1px solid var(--line);padding:10px;overflow:auto}
+aside h2,section h2{font-size:12px;color:var(--acc);margin:12px 0 6px;text-transform:uppercase}
+.m{padding:7px 8px;border:1px solid var(--line);border-radius:4px;margin-bottom:5px;cursor:pointer}
+.m:hover,.m.sel{border-color:var(--acc);background:var(--panel)}
+.m small{display:block;color:var(--mut)}
+section{flex:1;padding:12px 16px;min-width:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.k{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:8px}
+.k b{display:block;font-size:17px;color:var(--acc)}
+.k span{color:var(--mut);font-size:11px}
+table{border-collapse:collapse;width:100%}
+th,td{border-bottom:1px solid var(--line);padding:4px 8px;text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mut);font-weight:normal}
+.charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
+.c{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:6px}
+.c canvas{width:100%;height:110px;display:block}
+.c div{color:var(--mut);font-size:11px}
+.tl{display:flex;gap:2px;align-items:flex-end;height:50px}
+.tl i{flex:1;background:var(--acc);min-height:1px;opacity:.8}
+#log{background:#0a0a14;border:1px solid var(--line);max-height:260px;overflow:auto;padding:6px;white-space:pre-wrap}
+.WARNING{color:var(--warn)}.ERROR{color:var(--err)}.INFO{color:#aaa}
+a{color:var(--acc)}
+button{background:var(--panel);color:var(--txt);border:1px solid var(--line);padding:2px 8px;cursor:pointer}
+button.act{border-color:var(--acc);color:var(--acc)}
+@media(max-width:700px){main{flex-direction:column}aside{width:auto}}
