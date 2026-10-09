@@ -21,6 +21,8 @@ from datetime import datetime
 from json import loads, dumps
 from pathlib import Path
 from typing import Optional
+import socketserver
+import http.server
 
 import cv2
 import matplotlib as mpl
@@ -43,7 +45,7 @@ RUTA_SAVE    = RUTA_BASE / "missions"
 RUTA_LOG_FPS = RUTA_BASE / "output.log"
 CARPETA_MISSIONS = RUTA_BASE / "missions" 
 CAM_DISCONNECT_GRACE_MS = 8000   
-
+CARPETA_WEB = RUTA_BASE / "web"
 
 HUSKY_ALGO_COLORS = {
     "FACE_RECOGNITION":     "#FF6B6B",
@@ -2027,6 +2029,64 @@ def refresh_id_tree():
     root.after(200, refresh_id_tree)
 
 # ═════════════════════════════════════════════════════════════════
+# INTEGRACIÓ WEB
+# ═════════════════════════════════════════════════════════════════
+
+def generar_web_informe():
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <title>Informe de Misión - ESP32 Control</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; background: #1a1a2e; color: white; padding: 20px; }}
+            .card {{ background: #16213e; padding: 15px; border-radius: 8px; margin-bottom: 15px; }}
+            h1 {{ color: #00d4ff; }}
+        </style>
+    </head>
+    <body>
+        <h1>📊 Informe de Última Misión</h1>
+        <div class="card">
+            <h2>Resumen General</h2>
+            <p><strong>Última actualización:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <p><strong>Estado del sistema:</strong> Completado con éxito</p>
+        </div>
+        <!-- Aquí añadirías tarjetas con fotos, enlaces a CSV, etc. -->
+    </body>
+    </html>
+    """
+    
+    # 3. Escribimos el archivo HTML
+    with open("web/index.html", "w", encoding="utf-8") as f:
+        f.write(html_content)
+        
+    print("[WEB] Sitio web local actualizado correctamente.")
+
+def arrancar_servidor_web():
+    PORT = 8080
+    
+    CARPETA_WEB.mkdir(parents=True, exist_ok=True)
+    
+    index_file = CARPETA_WEB / "index.html"
+    if not index_file.exists():
+        index_file.write_text(
+            "<html><body><h1>Servidor Web Iniciat</h1><p>Pendents de generar informe...</p></body></html>",
+            encoding="utf-8"
+        )
+
+    class CustomHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(CARPETA_WEB), **kwargs)
+
+    try:
+        with socketserver.TCPServer(("", PORT), CustomHandler) as httpd:
+            print(f"[WEB] Servidor web actiu a http://localhost:{PORT}")
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"[WEB] Error iniciant servidor web: {e}")
+
+# ═════════════════════════════════════════════════════════════════
 # INTERFÍCIE UI
 # ═════════════════════════════════════════════════════════════════
 root = tk.Tk()
@@ -2204,6 +2264,7 @@ notebook_principal.add(tab_analisi, text="📂  Anàlisi Post-Missió")
 actualitzar_cub_3d(0.0, 0.0, 0.0)
 threading.Thread(target=tcp_server_loop, daemon=True).start()
 threading.Thread(target=_cam_decode_loop, daemon=True).start()
+threading.Thread(target=arrancar_servidor_web, daemon=True).start()
 actualitzar_grafics()
 root.after(50, refresh_cam_ui)
 root.after(200, refresh_id_tree)
