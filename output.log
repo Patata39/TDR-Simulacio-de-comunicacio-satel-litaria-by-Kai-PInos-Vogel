@@ -34,3 +34,15 @@
 2026-10-09 11:28:35 [INFO] ============================================================
 2026-10-09 11:28:35 [INFO] FI DEL REPORT
 
+2026-10-09 11:50:31 [INFO] ============================================================
+2026-10-09 11:50:31 [INFO] INICI DEL REPORT DE RENDIMENT DEL SISTEMA
+2026-10-09 11:50:31 [INFO] ============================================================
+2026-10-09 11:50:31 [INFO] Temps total d'activitat: 681.50 segons
+2026-10-09 11:50:31 [INFO] Rendiment Stream Vídeo: 0.00 FPS de mitjana
+2026-10-09 11:50:31 [INFO] Total de fotogrames processats: 0
+2026-10-09 11:50:31 [INFO] Rendiment Renderitzat 3D (Matplotlib): 0.01 FPS de refresc mitjà
+2026-10-09 11:50:31 [INFO] Visió Artificial (HuskyLens): 0 objectes a l'historial
+2026-10-09 11:50:31 [INFO] Xarxa TCP: S'han registrat 0 anomalies
+2026-10-09 11:50:31 [INFO] ============================================================
+2026-10-09 11:50:31 [INFO] FI DEL REPORT
+
