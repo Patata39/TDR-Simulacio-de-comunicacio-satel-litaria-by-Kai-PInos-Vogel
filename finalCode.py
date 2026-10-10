@@ -2030,18 +2030,11 @@ def refresh_id_tree():
 # INTEGRACIÓ WEB
 # ═════════════════════════════════════════════════════════════════
 
-# ═════════════════════════════════════════════════════════════════
-# INTEGRACIÓ WEB
-# ═════════════════════════════════════════════════════════════════
-# ── NOU: l'API JSON + pàgina estàtica. Dades que NO són a l'app:
-#   estadístiques min/màx/mitjana, qualitat RSSI, talls de dades,
-#   resum HuskyLens per objecte, cronologia de deteccions, nivells
-#   del log, estat en viu del sistema i descàrrega de fitxers.
-
 _RE_NOM_MISSIO = re.compile(r"^mision_\d{8}_\d{6}(?:_v\d+)?$")
 _FITXERS_DESCARREGABLES = {"telemetria.json", "huskylens.csv", "eventos.log"}
 _FITXERS_ESTATICS = {"/": "index.html", "/index.html": "index.html",
-                     "/style.css": "style.css", "/app.js": "app.js"}
+                     "/style.css": "style.css", "/app.js": "app.js",
+                     "/AppICO.ico": "AppICO.ico"}
 
 def _web_llegir_telemetria(ruta: Path) -> list:
     """Llegeix telemetria.json tolerant fitxers sense tancar (missió activa)."""
@@ -2064,6 +2057,28 @@ def _web_stats(vals: list):
         return None
     return {"min": round(min(v), 2), "max": round(max(v), 2),
             "avg": round(sum(v) / len(v), 2)}
+
+#Porque no comento esto???
+#Ya no se que hace, pero lo dejo por si acaso
+def _web_pics(telem: list, camps: dict, llindar: float = 3.0, maxim: int = 30) -> dict:
+    pics = {}
+    for c, k in camps.items():
+        pics[k] = []
+        if k == "yaw":   
+            continue
+        punts = [(int(r.get("ts_ms", 0)), float(r[c])) for r in telem if r.get(c) is not None]
+        if len(punts) < 10:
+            continue
+        vals  = [p[1] for p in punts]
+        mitja = sum(vals) / len(vals)
+        sigma = (sum((v - mitja) ** 2 for v in vals) / len(vals)) ** 0.5
+        if sigma < 1e-6:
+            continue
+        trobats = [{"ms": ms, "v": round(v, 2), "z": round((v - mitja) / sigma, 1)}
+                   for ms, v in punts if abs(v - mitja) > llindar * sigma]
+        trobats.sort(key=lambda p: -abs(p["z"]))                   
+        pics[k] = sorted(trobats[:maxim], key=lambda p: p["ms"])    
+    return pics
 
 def _web_resum_mision(nom: str):
     if not _RE_NOM_MISSIO.match(nom):
@@ -2105,6 +2120,7 @@ def _web_resum_mision(nom: str):
     camps = {"temperatura": "temp", "humedad": "hum", "presion": "pres",
              "rssi": "rssi", "roll": "roll", "pitch": "pitch", "yaw": "yaw"}
     stats = {k: _web_stats([r.get(c) for r in telem]) for c, k in camps.items()}
+    pics = _web_pics(telem, camps)
 
     # ── Qualitat RSSI (mateixos llindars que la finestra de salut)
     rssi_v = [r["rssi"] for r in telem if r.get("rssi") is not None]
@@ -2181,7 +2197,7 @@ def _web_resum_mision(nom: str):
         "nom": nom, "activa": activa, "duracio_ms": dur_ms,
         "n_telemetria": len(telem), "freq_hz": freq,
         "talls": talls, "max_tall_ms": max_tall,
-        "stats": stats, "qualitat_rssi": qualitat, "series": series,
+        "stats": stats, "pics": pics, "qualitat_rssi": qualitat, "series": series,
         "husky": {"total": sum(d["n"] for d in husky_llista),
                   "sense_deteccio": sense_det, "algos": sorted(algos),
                   "per_id": husky_llista, "cronologia": cronologia},
@@ -2225,9 +2241,10 @@ def _web_estat_viu() -> dict:
 class _WebHandler(http.server.SimpleHTTPRequestHandler):
 
     extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map,
-                   ".js":   "application/javascript",
-                   ".css":  "text/css",
-                   ".html": "text/html"}
+                  ".js":   "application/javascript",
+                  ".css":  "text/css",
+                  ".html": "text/html",
+                  ".jpg":  "image/x-icon"}
        
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(CARPETA_WEB), **kwargs)
@@ -2284,7 +2301,7 @@ class _WebHandler(http.server.SimpleHTTPRequestHandler):
 def generar_web_informe():
     """Comprova que els fitxers del panell (index.html, style.css, app.js) existeixen a /web."""
     CARPETA_WEB.mkdir(parents=True, exist_ok=True)
-    for nom in ("index.html", "style.css", "app.js"):
+    for nom in ("index.html", "style.css", "app.js", "AppICO.ico"):
         if not (CARPETA_WEB / nom).is_file():
             print(f"[WEB] AVÍS: falta web/{nom} — el panell no es veurà correctament.")
     print("[WEB] Fitxers del panell verificats.")

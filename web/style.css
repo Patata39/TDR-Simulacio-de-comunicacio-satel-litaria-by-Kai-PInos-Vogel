@@ -33,3 +33,9 @@ a{color:var(--acc)}
 button{background:var(--panel);color:var(--txt);border:1px solid var(--line);padding:2px 8px;cursor:pointer}
 button.act{border-color:var(--acc);color:var(--acc)}
 @media(max-width:700px){main{flex-direction:column}aside{width:auto}}
+header button{margin-left:auto}
+#avisos{position:sticky;top:0;z-index:5}
+.avis{padding:6px 16px;border-bottom:1px solid var(--line);background:var(--panel);cursor:pointer}
+.avis.err{color:var(--err);border-left:4px solid var(--err)}
+.avis.warn{color:var(--warn);border-left:4px solid var(--warn)}
+select{background:var(--panel);color:var(--txt);border:1px solid var(--line);padding:2px 6px;font:inherit}
