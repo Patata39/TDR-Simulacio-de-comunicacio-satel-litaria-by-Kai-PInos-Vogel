@@ -48,3 +48,4 @@ header #btnAlertes{margin-left:0}
   section table{display:block;overflow-x:auto;white-space:nowrap}
   .charts{grid-template-columns:1fr}
 }
+#detall.buit{display:none} 

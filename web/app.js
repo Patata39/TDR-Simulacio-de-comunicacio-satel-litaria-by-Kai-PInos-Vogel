@@ -27,6 +27,14 @@ function simulaAlerta(ev){
   ev&&ev.shiftKey?setTimeout(dispara,5000):dispara();
 }
 
+function tancaDetall(){
+  sel=null;ultima=null;cmpNom='';cmpDades=null;
+  const d=$('#detall');
+  d.innerHTML='<p style="color:var(--mut)">Selecciona una missió de la llista.</p>';
+  d.classList.add('buit');
+  colocaDetall();  
+}
+
 const prev={sensor:null,activa:false,caigut:false},mal={s:0,c:0},titolOrig=document.title;
 let blinkId=null;
 
@@ -58,6 +66,7 @@ async function llista(){
       ${m.activa?'<span style="color:var(--ok)">●</span> ':''}${esc(m.etiqueta)}
       <small>${esc(m.duracio)} · ${m.n_reg} deteccions</small></div>`).join('')||'<p style="color:var(--mut)">Cap missió guardada.</p>';
     document.querySelectorAll('.m').forEach(e=>e.onclick=()=>{
+      if(sel===e.dataset.n){tancaDetall();llista();return}
       sel=e.dataset.n;
       document.querySelectorAll('.m').forEach(x=>x.classList.toggle('sel',x===e));
       colocaDetall();
@@ -66,7 +75,7 @@ async function llista(){
       });
       llista();
     });
-    colocaDetall(); 
+    colocaDetall();
   }catch(e){}
 }
 
@@ -245,8 +254,13 @@ async function toggleAlertes(){
 
 async function carrega(){
   if(!sel)return;
-  try{ultima=await j('/api/mission/'+sel);render(ultima)}
-  catch(e){$('#detall').innerHTML='<p class="ERROR">No s\'ha pogut carregar la missió.</p>'}
+  const nom=sel;                                
+  $('#detall').classList.remove('buit');       
+  try{
+    const r=await j('/api/mission/'+nom);
+    if(nom!==sel)return;                   
+    ultima=r;render(r);
+  }catch(e){$('#detall').innerHTML='<p class="ERROR">No s\'ha pogut carregar la missió.</p>'}
 }
 live();llista();
 setInterval(live,2000);setInterval(llista,5000);
