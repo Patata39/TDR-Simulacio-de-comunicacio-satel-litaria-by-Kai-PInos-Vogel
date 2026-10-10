@@ -1,8 +1,0 @@
-[
-{"ts": "2026-06-18T10:35:27.913", "ts_ms": 20, "temperatura": 29.54, "humedad": 32.96, "presion": 1003.8, "roll": -1.92, "pitch": -1.93, "yaw": 25.04, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -35},
-{"ts": "2026-06-18T10:35:28.309", "ts_ms": 416, "temperatura": 29.54, "humedad": 32.96, "presion": 1003.8, "roll": -1.93, "pitch": -1.87, "yaw": 25.13, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -36},
-{"ts": "2026-06-18T10:35:28.807", "ts_ms": 914, "temperatura": 29.54, "humedad": 32.96, "presion": 1003.8, "roll": -1.77, "pitch": -1.79, "yaw": 25.22, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -39},
-{"ts": "2026-06-18T10:35:29.297", "ts_ms": 1403, "temperatura": 29.54, "humedad": 32.96, "presion": 1003.8, "roll": -1.8, "pitch": -1.77, "yaw": 25.3, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -34},
-{"ts": "2026-06-18T10:35:29.821", "ts_ms": 1928, "temperatura": 29.56, "humedad": 32.95, "presion": 1003.84, "roll": -1.82, "pitch": -1.88, "yaw": 25.41, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -32},
-{"ts": "2026-06-18T10:35:30.329", "ts_ms": 2436, "temperatura": 29.56, "humedad": 32.95, "presion": 1003.84, "roll": -1.76, "pitch": -1.9, "yaw": 25.52, "mag_x": 0.0, "mag_y": 0.0, "mag_z": 0.0, "rssi": -33}
-]
