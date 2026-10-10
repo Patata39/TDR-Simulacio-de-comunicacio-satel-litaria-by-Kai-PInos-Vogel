@@ -7,6 +7,26 @@ async function j(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);re
 let sel=null,filtre='ALL',ultima=null;
 let mostraPics=false,cmpNom='',cmpDades=null,llistaM=[];
 let alertesOn=false;try{alertesOn=localStorage.getItem('alertes')==='1'}catch(e){}
+
+const esMovil=()=>window.matchMedia('(max-width:700px)').matches;
+function colocaDetall(){
+  const d=$('#detall'),m=$('main');
+  const it=(esMovil()&&sel)?document.querySelector('.m.sel'):null;
+  if(it){if(it.nextElementSibling!==d)it.after(d)}   // mòbil -> sota la missió
+  else if(d.parentElement!==m)m.appendChild(d);       // escriptori -> lloc original
+}
+// si es gira el mòbil / canvia l'amplada, recol·loquem i repintem els gràfics
+window.matchMedia('(max-width:700px)').addEventListener('change',()=>{colocaDetall();if(ultima)render(ultima)});
+
+let simN=0;
+function simulaAlerta(ev){
+  const dispara=()=>{
+    if(simN++%2===0)avis('Sensor desconnectat (simulat) — la missió s\'ha finalitzat automàticament','err');
+    else avis('RSSI càmera deficient: -82 dBm (simulat)','warn');
+  };
+  ev&&ev.shiftKey?setTimeout(dispara,5000):dispara();
+}
+
 const prev={sensor:null,activa:false,caigut:false},mal={s:0,c:0},titolOrig=document.title;
 let blinkId=null;
 
@@ -31,11 +51,22 @@ async function live(){
 async function llista(){
   try{
     const ms=await j('/api/missions');
-    llistaM=ms;  
-    $('#llista').innerHTML=ms.map(m=>`<div class="m ${m.nom===sel?'sel':''}" data-n="${m.nom}">
+    llistaM=ms;
+    const l=$('#llista'),dt=$('#detall');
+    if(l.contains(dt))$('main').appendChild(dt);
+    l.innerHTML=ms.map(m=>`<div class="m ${m.nom===sel?'sel':''}" data-n="${m.nom}">
       ${m.activa?'<span style="color:var(--ok)">●</span> ':''}${esc(m.etiqueta)}
       <small>${esc(m.duracio)} · ${m.n_reg} deteccions</small></div>`).join('')||'<p style="color:var(--mut)">Cap missió guardada.</p>';
-    document.querySelectorAll('.m').forEach(e=>e.onclick=()=>{sel=e.dataset.n;carrega();llista()});
+    document.querySelectorAll('.m').forEach(e=>e.onclick=()=>{
+      sel=e.dataset.n;
+      document.querySelectorAll('.m').forEach(x=>x.classList.toggle('sel',x===e));
+      colocaDetall();
+      carrega().then(()=>{
+        if(esMovil()){const it=document.querySelector('.m.sel');if(it)it.scrollIntoView({behavior:'smooth',block:'start'})}
+      });
+      llista();
+    });
+    colocaDetall(); 
   }catch(e){}
 }
 

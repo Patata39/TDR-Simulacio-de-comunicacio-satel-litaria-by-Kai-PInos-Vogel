@@ -33,9 +33,18 @@ a{color:var(--acc)}
 button{background:var(--panel);color:var(--txt);border:1px solid var(--line);padding:2px 8px;cursor:pointer}
 button.act{border-color:var(--acc);color:var(--acc)}
 @media(max-width:700px){main{flex-direction:column}aside{width:auto}}
-header button{margin-left:auto}
 #avisos{position:sticky;top:0;z-index:5}
 .avis{padding:6px 16px;border-bottom:1px solid var(--line);background:var(--panel);cursor:pointer}
 .avis.err{color:var(--err);border-left:4px solid var(--err)}
 .avis.warn{color:var(--warn);border-left:4px solid var(--warn)}
 select{background:var(--panel);color:var(--txt);border:1px solid var(--line);padding:2px 6px;font:inherit}
+header #btnSimula{margin-left:auto}
+header #btnAlertes{margin-left:0}
+@media(max-width:700px){
+  aside{border-right:0;padding:8px}
+  .m{padding:10px}
+  header button{padding:8px 12px}
+  aside #detall{padding:8px 4px 12px;margin:0 0 8px 6px;border-left:2px solid var(--acc)}
+  section table{display:block;overflow-x:auto;white-space:nowrap}
+  .charts{grid-template-columns:1fr}
+}
