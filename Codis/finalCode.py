@@ -21,6 +21,11 @@ from pathlib import Path
 from typing import Optional
 import http.server
 from urllib.parse import urlparse, unquote
+import gzip
+import base64
+import hmac
+import subprocess
+import shutil
 
 import cv2
 import matplotlib as mpl
@@ -44,6 +49,11 @@ RUTA_LOG_FPS = RUTA_BASE / "output.log"
 CARPETA_MISSIONS = RUTA_BASE / "missions" 
 CAM_DISCONNECT_GRACE_MS = 8000   
 CARPETA_WEB = RUTA_BASE / "web"
+
+WEB_PORT          = 8080
+WEB_USUARI        = "tdr"
+WEB_CLAU          = "123"  
+TUNNEL_CLOUDFLARE = True                     
 
 HUSKY_ALGO_COLORS = {
     "FACE_RECOGNITION":     "#FF6B6B",
@@ -1995,20 +2005,24 @@ def comunicacio_desde_consola():
                 "STATUS        — estat connexions",
             ]
             for c in cmds: log(c, "info", ts=False)
+        case "TUNNEL":
+              if _tunnel_url: log(f"Panell públic: {_tunnel_url}", "info")
+              else: log("Túnel inactiu o encara iniciant.", "warning")
         case _: log(f"Comanda desconeguda: {cmd}", "error")
 
 def on_close():
-    global after_id, running
-    running = False
-    aturar_stream_video()
-    try: misiones.finalizar_mision()
-    except Exception: pass
-    try: generar_reporte_rendimiento_final()
-    except Exception as e: print(f"Error escribint el log final: {e}")
-    if after_id:
-        try: root.after_cancel(after_id)
-        except: pass
-    root.quit(); sys.exit()
+      global after_id, running
+      running = False
+      aturar_stream_video()
+      aturar_tunnel_cloudflare()  
+      try: misiones.finalizar_mision()
+      except Exception: pass
+      try: generar_reporte_rendimiento_final()
+      except Exception as e: print(f"Error escribint el log final: {e}")
+      if after_id:
+          try: root.after_cancel(after_id)
+          except: pass
+      root.quit(); sys.exit()
 
 _id_tree_last_ids = set()
 
@@ -2080,7 +2094,36 @@ def _web_pics(telem: list, camps: dict, llindar: float = 3.0, maxim: int = 30) -
         pics[k] = sorted(trobats[:maxim], key=lambda p: p["ms"])    
     return pics
 
+_web_cache      = {}
+_web_cache_lock = threading.Lock()
+
+def _web_signatura(ruta: Path) -> tuple:
+    sig = []
+    for nom in sorted(_FITXERS_DESCARREGABLES):
+        try:
+            st = (ruta / nom).stat()
+            sig.append((st.st_size, st.st_mtime_ns))
+        except OSError:
+            sig.append(None)
+    return tuple(sig)
+
 def _web_resum_mision(nom: str):
+    if not _RE_NOM_MISSIO.match(nom):
+        return None
+    ruta = CARPETA_MISSIONS / nom
+    if not ruta.is_dir():
+        return None
+    sig = _web_signatura(ruta)
+    with _web_cache_lock:
+        hit = _web_cache.get(nom)
+        if hit and hit[0] == sig:
+            return hit[1]
+    res = _web_resum_mision_calcul(nom)   # càlcul pesat 
+    with _web_cache_lock:
+        _web_cache[nom] = (sig, res)
+    return res
+
+def _web_resum_mision_calcul(nom: str):
     if not _RE_NOM_MISSIO.match(nom):
         return None
     ruta = CARPETA_MISSIONS / nom
@@ -2204,7 +2247,13 @@ def _web_resum_mision(nom: str):
         "nivells": nivells, "eventos": eventos, "fitxers": fitxers,
     }
 
+_web_llista_cache = {"t": 0.0, "v": []}
+
 def _web_llista_missions() -> list:
+    ara = time.time()
+    with _web_cache_lock:
+        if ara - _web_llista_cache["t"] < 5:
+            return _web_llista_cache["v"]
     res = []
     for m in misiones.listar_misiones():
         res.append({
@@ -2212,7 +2261,24 @@ def _web_llista_missions() -> list:
             "duracio": m["duracion"], "n_reg": m["n_reg"],
             "activa": bool(misiones.mision_activa and misiones.mision_activa.name == m["nombre"]),
         })
+    with _web_cache_lock:
+        _web_llista_cache["t"] = ara
+        _web_llista_cache["v"] = res
     return res
+
+def _json(self, obj, codi=200):
+    cos = _json_mod.dumps(obj, ensure_ascii=False, default=str).encode("utf-8")
+    gz = "gzip" in self.headers.get("Accept-Encoding", "")
+    if gz:
+        cos = gzip.compress(cos, compresslevel=5)
+    self.send_response(codi)
+    self.send_header("Content-Type", "application/json; charset=utf-8")
+    self.send_header("Cache-Control", "no-store")
+    if gz:
+        self.send_header("Content-Encoding", "gzip")
+    self.send_header("Content-Length", str(len(cos)))
+    self.end_headers()
+    self.wfile.write(cos)
 
 def _web_estat_viu() -> dict:
     with sensor_lock:
@@ -2276,7 +2342,24 @@ class _WebHandler(http.server.SimpleHTTPRequestHandler):
         with open(p, "rb") as f:
             self.copyfile(f, self.wfile)
 
+    def _autoritzat(self) -> bool:
+        h = self.headers.get("Authorization", "")
+        if not h.startswith("Basic "):
+            return False
+        try:
+            usr, _, pwd = base64.b64decode(h[6:]).decode("utf-8").partition(":")
+        except Exception:
+            return False
+        return (hmac.compare_digest(usr.encode(), WEB_USUARI.encode()) and
+                hmac.compare_digest(pwd.encode(), WEB_CLAU.encode()))
+
     def do_GET(self):
+        if not self._autoritzat():
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="COCHECITO"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         ruta = urlparse(self.path).path
         try:
             if ruta == "/api/live":
@@ -2294,7 +2377,7 @@ class _WebHandler(http.server.SimpleHTTPRequestHandler):
             return self._json({"error": str(e)}, 500)
         fitxer = _FITXERS_ESTATICS.get(ruta)
         if fitxer:
-            self.path = "/" + fitxer   
+            self.path = "/" + fitxer
             return super().do_GET()
         self.send_error(404)
 
@@ -2307,7 +2390,7 @@ def generar_web_informe():
     print("[WEB] Fitxers del panell verificats.")
 
 def arrancar_servidor_web():
-    PORT = 8080
+    PORT = WEB_PORT
     try:
         generar_web_informe()
         # ThreadingHTTPServer: una petició lenta no bloqueja les altres
@@ -2321,6 +2404,64 @@ def arrancar_servidor_web():
 # ═════════════════════════════════════════════════════════════════
 # INTERFÍCIE UI
 # ═════════════════════════════════════════════════════════════════
+_tunnel_proc = None
+_tunnel_url  = None
+_RE_TUNNEL   = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+
+def arrancar_tunnel_cloudflare():
+    """Llança 'cloudflared' en un subprocés, captura la URL pública
+    de la seva sortida i la mostra a la consola."""
+    global _tunnel_proc, _tunnel_url
+    exe = shutil.which("cloudflared")
+    if not exe:
+        local = RUTA_BASE / ("cloudflared.exe" if sys.platform == "win32" else "cloudflared")
+        exe = str(local) if local.is_file() else None
+    if not exe:
+        log("cloudflared no trobat (winget install Cloudflare.cloudflared). Panell només en local.", "warning")
+        return
+    cmd = [exe, "tunnel", "--no-autoupdate", "--url", f"http://localhost:{WEB_PORT}"]
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        _tunnel_proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", creationflags=flags)
+    except Exception as e:
+        log(f"No s'ha pogut iniciar el túnel: {e}", "error")
+        return
+    log("Túnel Cloudflare iniciant...", "info")
+    # Cal seguir llegint la sortida fins al final, sinó el pipe s'omple i el procés es bloqueja
+    for linia in _tunnel_proc.stdout:
+        if _tunnel_url is None:
+            m = _RE_TUNNEL.search(linia)
+            if m:
+                _tunnel_url = m.group(0)
+                log(f"Panell públic: {_tunnel_url}", "success")
+                log(f"Usuari: {WEB_USUARI}  ·  Clau: {WEB_CLAU}", "info")
+                misiones.log_evento("info", f"Túnel Cloudflare actiu: {_tunnel_url}")
+    # si arribem aquí, cloudflared ha acabat
+    if _tunnel_url:
+        log("Túnel Cloudflare tancat.", "warning")
+    _tunnel_url = None
+
+def aturar_tunnel_cloudflare():
+    global _tunnel_proc
+    if _tunnel_proc and _tunnel_proc.poll() is None:
+        try:
+            _tunnel_proc.terminate()
+            _tunnel_proc.wait(timeout=3)
+        except Exception:
+            try: _tunnel_proc.kill()
+            except Exception: pass
+    _tunnel_proc = None
+
+def copiar_url_tunnel():
+    if not _tunnel_url:
+        log("El túnel encara no està actiu.", "warning")
+        return
+    root.clipboard_clear()
+    root.clipboard_append(_tunnel_url)
+    log(f"URL copiada al porta-retalls: {_tunnel_url}", "success")
+
 root = tk.Tk()
 root.title("ESP32 Control Remot — Servidor")
 root.protocol("WM_DELETE_WINDOW", on_close)
@@ -2339,6 +2480,7 @@ menu_principal.add_cascade(label="Eines", menu=menu_eines)
 menu_eines.add_command(label="🔍  HuskyLens — Detector d'Objectes", command=abrir_ventana_huskylens)
 menu_eines.add_command(label="📊  Salut dels Controladors", command=abrir_ventana_salud)
 menu_eines.add_command(label="🚗  Control Cotxe Arduino", command=abrir_ventana_coche)
+menu_eines.add_command(label="🌐  Copiar URL pública", command=copiar_url_tunnel)
 
 # ── Notebook principal amb dues pestanyes ─────────────────────────
 notebook_principal = ttk.Notebook(root)
@@ -2494,6 +2636,9 @@ notebook_principal.add(tab_analisi, text="📂  Anàlisi Post-Missió")
 
 # ── Arrencada ─────────────────────────────────────────────────────
 actualitzar_cub_3d(0.0, 0.0, 0.0)
+
+if TUNNEL_CLOUDFLARE:
+    threading.Thread(target=arrancar_tunnel_cloudflare, daemon=True).start()
 threading.Thread(target=tcp_server_loop, daemon=True).start()
 threading.Thread(target=_cam_decode_loop, daemon=True).start()
 threading.Thread(target=arrancar_servidor_web, daemon=True).start()
@@ -2503,5 +2648,6 @@ root.after(200, refresh_id_tree)
 root.after(1000, _sync_mision_btn)
 root.bind("<FocusOut>", _on_focus_out)
 root.bind("<FocusIn>",  _on_focus_in)
+
 
 root.mainloop()

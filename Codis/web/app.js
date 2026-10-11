@@ -263,7 +263,7 @@ async function carrega(){
   }catch(e){$('#detall').innerHTML='<p class="ERROR">No s\'ha pogut carregar la missió.</p>'}
 }
 live();llista();
-setInterval(live,2000);setInterval(llista,5000);
-setInterval(()=>{if(ultima&&ultima.activa)carrega()},3000);
-pintaBtnAlertes(); 
+setInterval(live,2000);
+setInterval(()=>{if(!document.hidden)llista()},5000);
+setInterval(()=>{if(!document.hidden&&ultima&&ultima.activa)carrega()},3000);
 live();llista();
