@@ -2404,41 +2404,54 @@ _tunnel_url  = None
 _RE_TUNNEL   = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
 def arrancar_tunnel_cloudflare():
-    """Llança 'cloudflared' en un subprocés, captura la URL pública
-    de la seva sortida i la mostra a la consola."""
+    """Llança 'cloudflared', captura la URL i el reinicia si cau."""
     global _tunnel_proc, _tunnel_url
     exe = shutil.which("cloudflared")
     if not exe:
         local = RUTA_BASE / ("cloudflared.exe" if sys.platform == "win32" else "cloudflared")
         exe = str(local) if local.is_file() else None
     if not exe:
-        log("cloudflared no trobat (winget install Cloudflare.cloudflared). Panell només en local.", "warning")
+        log("cloudflared no trobat. Panell només en local.", "warning")
         return
-    cmd = [exe, "tunnel", "--no-autoupdate", "--url", f"http://localhost:{WEB_PORT}"]
+
+    cmd = [exe, "tunnel", "--no-autoupdate",
+           "--protocol", "http2",          
+           "--url", f"http://localhost:{WEB_PORT}"]
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    try:
-        _tunnel_proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace", creationflags=flags)
-    except Exception as e:
-        log(f"No s'ha pogut iniciar el túnel: {e}", "error")
-        return
-    log("Túnel Cloudflare iniciant...", "info")
-    # Cal seguir llegint la sortida fins al final, sinó el pipe s'omple i el procés es bloqueja
-    for linia in _tunnel_proc.stdout:
-        if _tunnel_url is None:
-            m = _RE_TUNNEL.search(linia)
-            if m:
-                _tunnel_url = m.group(0)
-                log(f"Panell públic: {_tunnel_url}", "success")
-                misiones.log_evento("info", f"Túnel Cloudflare actiu: {_tunnel_url}")
-    # si arribem aquí, cloudflared ha acabat
-    if _tunnel_url:
-        log("Túnel Cloudflare tancat.", "warning")
-    _tunnel_url = None
+    ruta_log_tunnel = RUTA_BASE / "tunnel.log"
+
+    while tunnel_actiu:                        # bucle de reintents
+        _tunnel_url = None
+        try:
+            _tunnel_proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace", creationflags=flags)
+        except Exception as e:
+            log(f"No s'ha pogut iniciar el túnel: {e}", "error")
+            return
+        log("Túnel Cloudflare iniciant...", "info")
+
+        with open(ruta_log_tunnel, "a", encoding="utf-8") as flog:
+            for linia in _tunnel_proc.stdout:
+                flog.write(linia); flog.flush()      # guardem el motiu de la caiguda
+                if _tunnel_url is None:
+                    m = _RE_TUNNEL.search(linia)
+                    if m:
+                        _tunnel_url = m.group(0)
+                        log(f"Panell públic: {_tunnel_url}", "success")
+                        misiones.log_evento("info", f"Túnel Cloudflare actiu: {_tunnel_url}")
+
+        if not tunnel_actiu:
+            break
+        log("Túnel caigut. Reintentant en 5 s (la URL canviarà)...", "warning")
+        _tunnel_url = None
+        time.sleep(5)
+
+tunnel_actiu = True 
 
 def aturar_tunnel_cloudflare():
-    global _tunnel_proc
+    global _tunnel_proc, tunnel_actiu
+    tunnel_actiu = False
     if _tunnel_proc and _tunnel_proc.poll() is None:
         try:
             _tunnel_proc.terminate()
