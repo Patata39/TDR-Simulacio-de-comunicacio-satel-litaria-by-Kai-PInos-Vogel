@@ -1,4 +1,5 @@
 """
+======================================
 Servidor Python — ESP32 Control Remot
 ======================================
 """
@@ -2354,12 +2355,6 @@ class _WebHandler(http.server.SimpleHTTPRequestHandler):
                 hmac.compare_digest(pwd.encode(), WEB_CLAU.encode()))
 
     def do_GET(self):
-        if not self._autoritzat():
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="COCHECITO"')
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
         ruta = urlparse(self.path).path
         try:
             if ruta == "/api/live":
@@ -2436,7 +2431,6 @@ def arrancar_tunnel_cloudflare():
             if m:
                 _tunnel_url = m.group(0)
                 log(f"Panell públic: {_tunnel_url}", "success")
-                log(f"Usuari: {WEB_USUARI}  ·  Clau: {WEB_CLAU}", "info")
                 misiones.log_evento("info", f"Túnel Cloudflare actiu: {_tunnel_url}")
     # si arribem aquí, cloudflared ha acabat
     if _tunnel_url:
