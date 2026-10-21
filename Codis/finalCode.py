@@ -54,7 +54,13 @@ CARPETA_WEB = RUTA_BASE / "web"
 WEB_PORT          = 8080
 WEB_USUARI        = "tdr"
 WEB_CLAU          = "123"  
-TUNNEL_CLOUDFLARE = True                     
+TUNNEL_CLOUDFLARE = True     
+
+CAM_IDLE_TIMEOUT_S   = 10          # sense bytes de la càmera durant X s => connexió morta
+CAM_MAGIC            = b"MCAM"
+CAM_MAX_FRAME_BYTES  = 512 * 1024  
+HELLO_TIMEOUT_S      = 5
+HELLO_MAX_BYTES      = 64
 
 HUSKY_ALGO_COLORS = {
     "FACE_RECOGNITION":     "#FF6B6B",
@@ -432,6 +438,37 @@ def log(text, estil="normal", subtext="", subestil="normal", ts=True):
 # ─────────────────────────────────────────────────────────────────
 # SERVIDOR TCP
 # ─────────────────────────────────────────────────────────────────
+def _cerrar_socket(s):
+    """shutdown + close: desbloqueja un recv() d'un altre fil de forma fiable."""
+    if s is None:
+        return
+    try: s.shutdown(socket.SHUT_RDWR)
+    except Exception: pass
+    try: s.close()
+    except Exception: pass
+ 
+def _configurar_keepalive(sock, idle=5, interval=2, count=3):
+    """Detecta connexions mig-obertes (WiFi caigut sense FIN)."""
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if sys.platform == "win32":
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, idle * 1000, interval * 1000))
+        else:
+            if hasattr(socket, "TCP_KEEPIDLE"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, idle)
+            elif hasattr(socket, "TCP_KEEPALIVE"):          # macOS
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, idle)
+            if hasattr(socket, "TCP_KEEPINTVL"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval)
+            if hasattr(socket, "TCP_KEEPCNT"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, count)
+    except (OSError, AttributeError, ValueError):
+        pass
+ 
+ 
+class _CamDesync(Exception):
+    pass
+
 def handle_sensor_client(conn, addr):
     global sensor_client_socket, anomalies_tcp
     log(f"Sensor ESP32 connectat: {addr[0]}:{addr[1]}", "success")
@@ -615,6 +652,7 @@ def _cam_decode_loop():
 
     while True:
         jpg = None
+        _ult_err_dec = 0.0
         with cam_frame_lock:
             if latest_cam_frame:
                 jpg = latest_cam_frame
@@ -623,6 +661,8 @@ def _cam_decode_loop():
             try:
                 np_arr    = np.frombuffer(jpg, dtype=np.uint8)
                 frame_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                if frame_bgr is None:
+                    raise ValueError("JPEG corrupte o truncat")
                 gpu_frame = cv2.UMat(frame_bgr)
                 frame_res = cv2.resize(gpu_frame, (CAM_W, CAM_H), interpolation=cv2.INTER_LINEAR)
                 frame_cpu = frame_res.get()
@@ -658,66 +698,132 @@ def _cam_decode_loop():
                     latest_decoded_pil = img
                     _decoded_frame_id += 1
                 contador_frames_cam += 1
-            except Exception:
-                pass
+            except Exception as e:
+               ara = time.time()
+               if ara - _ult_err_dec > 5.0:
+                   _ult_err_dec = ara
+                   log(f"Error decodificant frame de càmera: {e}", "warning")
+ 
         else:
             time.sleep(0.004)
 
 def handle_cam_direct_client(conn, addr):
     global latest_cam_frame, anomalies_tcp
-    log(f"ESP32-CAM connectada: {addr[0]}", "success")
-    misiones.log_evento("info", f"Càmera connectada: {addr[0]}")
+ 
     with cam_lock:
+        vell = cam_state["client"]
         cam_state["connected"] = True
         cam_state["client"]    = conn
-    root.after(0, lambda: [cam_status_var.set("● STREAM BINARI ACTIU"), cam_status_label.config(fg="#00aa44")])
-    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
-    conn.settimeout(15.0)
-
+    if vell is not None and vell is not conn:
+        log("ESP32-CAM ha reconnectat: es tanca la connexió antiga.", "warning")
+        misiones.log_evento("warning", "Càmera reconnectada: connexió antiga tancada")
+        _cerrar_socket(vell)
+ 
+    log(f"ESP32-CAM connectada: {addr[0]}", "success")
+    misiones.log_evento("info", f"Càmera connectada: {addr[0]}")
+    root.after(0, lambda: [cam_status_var.set("● STREAM BINARI ACTIU"),
+                           cam_status_label.config(fg="#00aa44")])
+ 
+    motiu     = "connexió tancada per la càmera"
+    hi_ha_err = False
+    ultim_av  = [0.0]    # rate-limit dels avisos de resincronització
+ 
     def recv_exact(n):
-        data = bytearray()
-        while len(data) < n:
-            try:
-                packet = conn.recv(n - len(data))
-                if not packet: return None
-                data.extend(packet)
-            except socket.timeout: continue
-            except OSError: return None
-        return bytes(data)
-
+        buf = bytearray(n)
+        view = memoryview(buf)
+        got = 0
+        while got < n:
+            k = conn.recv_into(view[got:], n - got)   # socket.timeout => propaga
+            if k == 0:
+                raise ConnectionError("tancada pel peer")
+            got += k
+        return bytes(buf)
+ 
+    def sync_magic():
+        """Cerca 'MCAM' byte a byte. Retorna quants bytes s'han descartat."""
+        win = bytearray(recv_exact(4))
+        descartats = 0
+        while bytes(win) != CAM_MAGIC:
+            win = win[1:] + bytearray(recv_exact(1))
+            descartats += 1
+            if descartats > 2 * CAM_MAX_FRAME_BYTES:
+                raise _CamDesync("flux sense cap capçalera MCAM vàlida")
+        return descartats
+ 
+    def avis_desync(txt):
+        global anomalies_tcp
+        anomalies_tcp += 1
+        misiones.log_evento("warning", txt)
+        ara = time.time()
+        if ara - ultim_av[0] > 2.0:
+            ultim_av[0] = ara
+            log(txt, "warning")
+ 
     try:
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 131072)
+        _configurar_keepalive(conn)
+        conn.settimeout(CAM_IDLE_TIMEOUT_S)
+ 
         while True:
-            magic = recv_exact(4)
-            if not magic: break
-            if magic != b"MCAM": continue
-            header = recv_exact(4)
-            if not header: break
-            tamano = int.from_bytes(header, "big")
-            if tamano <= 0 or tamano > 120000: continue
+            descartats = sync_magic()
+            if descartats:
+                avis_desync(f"Càmera: flux desincronitzat, {descartats} bytes descartats (resync OK)")
+            tamano = int.from_bytes(recv_exact(4), "big")
+            if tamano < 4 or tamano > CAM_MAX_FRAME_BYTES:
+                avis_desync(f"Càmera: mida de frame invàlida ({tamano}); resincronitzant")
+                continue                       # torna a buscar MCAM (no es queda desalineat)
             jpg_bytes = recv_exact(tamano)
-            if not jpg_bytes: break
-            try: conn.sendall(b'\x01')
-            except Exception: break
+            conn.sendall(b"\x01")              # ACK sempre que el frame arribi sencer
+            if jpg_bytes[:2] != b"\xff\xd8":
+                avis_desync("Càmera: frame sense capçalera JPEG (SOI); descartat")
+                continue
             with cam_frame_lock:
                 latest_cam_frame = jpg_bytes
+ 
+    except socket.timeout:
+        hi_ha_err = True
+        motiu = f"sense dades durant {CAM_IDLE_TIMEOUT_S}s (càmera penjada o WiFi caigut)"
+    except _CamDesync as e:
+        hi_ha_err = True
+        motiu = str(e)
+    except (ConnectionError, OSError) as e:
+        hi_ha_err = True
+        motiu = f"connexió perduda ({e})"
     except Exception as e:
-        anomalies_tcp += 1
-        misiones.log_evento("error", f"Error en stream de càmera: {e}")
+        hi_ha_err = True
+        motiu = f"error inesperat: {e!r}"
     finally:
         with cam_lock:
-            cam_state["connected"] = False
-            cam_state["client"]    = None
-        conn.close()
-        misiones.log_evento("warning", f"Càmera desconnectada (connexió tancada): {addr[0]}")
+            era_actual = cam_state["client"] is conn
+            if era_actual:
+                cam_state["connected"] = False
+                cam_state["client"]    = None
+        _cerrar_socket(conn)
+ 
+    if not era_actual:
+        misiones.log_evento("info", "Connexió de càmera antiga finalitzada (substituïda o aturada)")
+        return
+ 
+    if hi_ha_err:
+        anomalies_tcp += 1
+    log(f"ESP32-CAM desconnectada: {motiu}", "warning")
+    misiones.log_evento("warning", f"Càmera desconnectada ({addr[0]}): {motiu}")
+ 
+    try:
+        root.after(0, lambda: [cam_status_var.set("◌ Reconnectant..."),
+                               cam_status_label.config(fg="#FF9F1C")])
         _addr_cap = addr[0]
         def _check_cam_still_down():
             with cam_lock:
                 still_down = not cam_state["connected"]
             if still_down:
-                log(f"ESP32-CAM desconnectada de veritat (>{CAM_DISCONNECT_GRACE_MS//1000}s sense reconnectar): {_addr_cap}", "warning")
-                aturar_stream_video()
+                log(f"ESP32-CAM sense reconnectar (>{CAM_DISCONNECT_GRACE_MS//1000}s): {_addr_cap}", "warning")
+                aturar_stream_video(nomes_si_desconnectada=True)
         root.after(CAM_DISCONNECT_GRACE_MS, _check_cam_still_down)
+    except RuntimeError:
+        pass   # la finestra Tk ja s'està tancant
+ 
 
 def refresh_cam_ui():
     global _displayed_frame_id
@@ -737,41 +843,67 @@ def refresh_cam_ui():
             bg = Image.new("RGB", (cw, ch), (17, 17, 34))
             bg.paste(img_fit, ((cw - new_w) // 2, (ch - new_h) // 2))
             photo = ImageTk.PhotoImage(bg)
+            vells = cam_canvas.find_withtag("frame")
             cam_canvas.delete("placeholder")
             cam_canvas.create_image(0, 0, anchor=tk.NW, image=photo, tags="frame")
+            for it in vells: cam_canvas.delete(it)
             cam_canvas.image = photo
         except Exception:
             pass
     root.after(30, refresh_cam_ui)
 
+def _atendre_connexio_nova(conn, addr):
+    """Handshake HELLO en un fil propi: un client lent/mut ja no bloqueja accept()."""
+    global anomalies_tcp
+    try:
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        conn.settimeout(HELLO_TIMEOUT_S)
+        hello_bytes = bytearray()
+        while not hello_bytes.endswith(b"\n"):
+            if len(hello_bytes) >= HELLO_MAX_BYTES:
+                raise ValueError("HELLO massa llarg")
+            b = conn.recv(1)
+            if not b:
+                raise ConnectionError("tancada abans del HELLO")
+            hello_bytes += b
+        hello = hello_bytes.decode("utf-8", errors="ignore").strip()
+        conn.settimeout(None)
+    except Exception as e:
+        anomalies_tcp += 1
+        misiones.log_evento("error", f"Handshake fallit amb {addr[0]}: {e!r}")
+        _cerrar_socket(conn)                  
+        return
+ 
+    if hello.startswith("HELLO:sensor"):
+        handle_sensor_client(conn, addr)
+    elif hello.startswith("HELLO:camera_direct"):
+        handle_cam_direct_client(conn, addr)
+    else:
+        misiones.log_evento("warning", f"HELLO desconegut de {addr[0]}: {hello[:30]!r}")
+        _cerrar_socket(conn)
+ 
 def tcp_server_loop():
     global anomalies_tcp
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((SERVER_HOST, SERVER_PORT))
-    srv.listen(5)
+    try:
+        srv.bind((SERVER_HOST, SERVER_PORT))
+        srv.listen(8)
+    except OSError as e:
+        log(f"ERROR: no es pot obrir el port TCP {SERVER_PORT}: {e}", "error_bold")
+        misiones.log_evento("error", f"No es pot obrir el port TCP {SERVER_PORT}: {e}")
+        return
     log("Servidor TCP iniciat. Esperant ESP32...", "normal")
     while True:
         try:
             conn, addr = srv.accept()
-            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            conn.settimeout(5.0)
-            hello_bytes = b""
-            while not hello_bytes.endswith(b"\n"):
-                b = conn.recv(1)
-                if not b: raise ConnectionError
-                hello_bytes += b
-            hello = hello_bytes.decode("utf-8", errors="ignore").strip()
-            conn.settimeout(None)
-            if hello.startswith("HELLO:sensor"):
-                threading.Thread(target=handle_sensor_client, args=(conn, addr), daemon=True).start()
-            elif hello.startswith("HELLO:camera_direct"):
-                threading.Thread(target=handle_cam_direct_client, args=(conn, addr), daemon=True).start()
-            else:
-                conn.close()
-        except Exception as e:
+        except OSError as e:
             anomalies_tcp += 1
             misiones.log_evento("error", f"Anomalia TCP al acceptar connexió: {e}")
+            time.sleep(0.2)                   # evita bucle calent si l'error persisteix
+            continue
+        threading.Thread(target=_atendre_connexio_nova, args=(conn, addr), daemon=True).start()
+ 
 
 def enviar_comanda_sensor(cmd: str):
     with sensor_client_lock:
@@ -780,17 +912,28 @@ def enviar_comanda_sensor(cmd: str):
         try: s.sendall((cmd + "\n").encode("utf-8"))
         except Exception: pass
 
-def aturar_stream_video():
+def aturar_stream_video(nomes_si_desconnectada=False):
+    """Atura el stream. Amb nomes_si_desconnectada=True no fa res si la càmera
+    ha reconnectat entretant (evita matar una connexió nova)."""
+    global latest_cam_frame, latest_decoded_pil
     with cam_lock:
-        if cam_state["client"]:
-            try: cam_state["client"].close()
-            except: pass
-            cam_state["connected"] = False
-            cam_state["client"]    = None
+        if nomes_si_desconnectada and cam_state["connected"]:
+            return
+        client = cam_state["client"]
+        cam_state["connected"] = False
+        cam_state["client"]    = None
+    _cerrar_socket(client)
+    with cam_frame_lock:
+        latest_cam_frame = None
+    with decoded_pil_lock:
+        latest_decoded_pil = None            # evita guardar una captura "vella"
     cam_status_var.set("○ Sense càmera")
     cam_status_label.config(fg="#999999")
     cam_canvas.delete("all")
-    cam_canvas.create_text(240, 180, text="Esperant ESP32-CAM...", fill="#666666", font=("Consolas", 12), tags="placeholder")
+    cam_canvas.create_text(240, 180, text="Esperant ESP32-CAM...", fill="#666666",
+                           font=("Consolas", 12), tags="placeholder")
+ 
+ 
 
 # ─────────────────────────────────────────────────────────────────
 # CUB 3D — MATPLOTLIB
